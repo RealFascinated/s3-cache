@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -43,7 +44,8 @@ func GetFileWithRange(bucket, key string, start, end int64) (*File, error) {
 		cache.UpdateLastRead(bucket, key)
 
 		// Get the file from the file system if it exists in cache
-		filePath := "./cache/" + bucket + "/" + key	
+		cacheDir := getCacheDir()
+		filePath := cacheDir + "/" + bucket + "/" + key	
 		if _, err := os.Stat(filePath); err == nil {
 			return getFileFromCacheWithRange(filePath, entry.ContentType, start, end, before)
 		}
@@ -146,8 +148,19 @@ func getFileFromS3WithRange(s3Client *minio.Client, bucket, key string, start, e
 
 	// Save to cache if it's a full file request
 	if start < 0 && end < 0 {
-		os.MkdirAll("./cache/"+bucket, 0755)
-		err = os.WriteFile("./cache/"+bucket+"/"+key, data, 0644)
+		// Create the full directory structure for the key
+		cacheDir := getCacheDir()
+		cachePath := cacheDir + "/" + bucket + "/" + key
+		dir := cachePath[:strings.LastIndex(cachePath, "/")]
+		os.MkdirAll(dir, 0755)
+
+		// Create directory if it doesn't exist
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			os.MkdirAll(dir, 0755)
+		}
+		
+		// Write to the filesystem
+		err = os.WriteFile(cachePath, data, 0644)
 		if err != nil {
 			// Log error but don't fail the request
 			fmt.Printf("Failed to write to cache: %v\n", err)
@@ -178,4 +191,12 @@ func getFileFromS3WithRange(s3Client *minio.Client, bucket, key string, start, e
 		End:         actualEnd,
 		TotalSize:   stat.Size,
 	}, nil
+}
+
+// getCacheDir returns the cache directory path from environment variable or defaults to "./cache"
+func getCacheDir() string {
+	if cacheDir := os.Getenv("FILE_CACHE_DIR"); cacheDir != "" {
+		return cacheDir
+	}
+	return "./cache"
 }
